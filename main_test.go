@@ -36,7 +36,7 @@ func TestExtractWorkingDir(t *testing.T) {
 			expected: "",
 		},
 		{
-			name:     "Single segment path",
+			name:     "Single segment path (returned as-is)",
 			labels:   "com.docker.compose.project.working_dir=/myproject",
 			expected: "/myproject",
 		},
