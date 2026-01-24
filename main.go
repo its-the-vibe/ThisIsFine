@@ -74,7 +74,10 @@ func getRunningServices() ([]string, error) {
 	cmd := exec.Command("docker", "ps", "--format", "json")
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("executing docker ps: %w", err)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("executing docker ps: %w (stderr: %s)", err, string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("executing docker ps: %w (is Docker installed and running?)", err)
 	}
 
 	var runningServices []string
