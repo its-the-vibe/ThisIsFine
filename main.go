@@ -320,7 +320,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 </head>
 <body>
     <div class="container">
-        <h1>🐳 Docker Service Status Dashboard</h1>
+        <h1>{{.Icon}} Docker Service Status Dashboard</h1>
         
         <div class="refresh-info">
             Auto-refresh: Reload the page to update status
@@ -373,15 +373,21 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := struct {
-		Services      []ServiceStatus
-		RunningCount  int
-		StoppedCount  int
-		TotalCount    int
+		Services     []ServiceStatus
+		RunningCount int
+		StoppedCount int
+		TotalCount   int
+		Icon         string
 	}{
-		Services:      statuses,
-		RunningCount:  runningCount,
-		StoppedCount:  stoppedCount,
-		TotalCount:    len(statuses),
+		Services:     statuses,
+		RunningCount: runningCount,
+		StoppedCount: stoppedCount,
+		TotalCount:   len(statuses),
+		Icon:         "😺",
+	}
+
+	if stoppedCount > 0 {
+		data.Icon = "😿"
 	}
 
 	if err := tmpl.Execute(w, data); err != nil {
