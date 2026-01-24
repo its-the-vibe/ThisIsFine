@@ -1,0 +1,11 @@
+{
+  "port": 8080,
+  "services": [
+    "/home/ubuntu/github/its-the-vibe/rate-my",
+    "/home/ubuntu/github/its-the-vibe/service-1",
+    "/home/ubuntu/github/its-the-vibe/service-2",
+    "/home/ubuntu/github/its-the-vibe/service-3",
+    "/home/ubuntu/github/its-the-vibe/service-4",
+    "/home/ubuntu/github/its-the-vibe/service-5"
+  ]
+}
