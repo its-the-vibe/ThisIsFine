@@ -15,7 +15,7 @@ A simple, self-contained Docker service status dashboard written in Go. Monitor 
 
 ## Requirements
 
-- Go 1.24 or later
+- Go 1.25 or later
 - Docker installed and running
 - Docker Compose services with standard labels
 
