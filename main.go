@@ -175,9 +175,15 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            {{if gt .StoppedCount 0}}
+            background: #ED213A;  /* fallback for old browsers */
+            background: -webkit-linear-gradient(to right, #93291E, #ED213A);  /* Chrome 10-25, Safari 5.1-6 */
+            background: linear-gradient(to right, #93291E, #ED213A); /* W3C, IE 10+/ Edge, Firefox 16+, Chrome 26+, Opera 12+, Safari 7+ */
+            {{else}}
             background: #83a4d4;  /* fallback for old browsers */
             background: -webkit-linear-gradient(to top, #b6fbff, #83a4d4);  /* Chrome 10-25, Safari 5.1-6 */
             background: linear-gradient(to top, #b6fbff, #83a4d4); /* W3C, IE 10+/ Edge, Firefox 16+, Chrome 26+, Opera 12+, Safari 7+ */
+            {{end}}
             min-height: 100vh;
             padding: 20px;
         }
