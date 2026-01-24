@@ -111,10 +111,19 @@ func extractWorkingDir(labels string) string {
 		if strings.HasPrefix(pair, "com.docker.compose.project.working_dir=") {
 			fullPath := strings.TrimPrefix(pair, "com.docker.compose.project.working_dir=")
 			// Extract only the last 2 parts (orgname/servicename)
-			parts := strings.Split(strings.Trim(fullPath, "/"), "/")
-			if len(parts) >= 2 {
-				return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+			fullPath = strings.TrimSuffix(fullPath, "/")
+			parts := strings.Split(fullPath, "/")
+			// Filter out empty parts
+			var nonEmptyParts []string
+			for _, part := range parts {
+				if part != "" {
+					nonEmptyParts = append(nonEmptyParts, part)
+				}
 			}
+			if len(nonEmptyParts) >= 2 {
+				return nonEmptyParts[len(nonEmptyParts)-2] + "/" + nonEmptyParts[len(nonEmptyParts)-1]
+			}
+			// If less than 2 parts, return the full path as-is
 			return fullPath
 		}
 	}
