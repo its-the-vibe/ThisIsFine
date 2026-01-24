@@ -48,14 +48,14 @@ Edit `config.json` to list your expected services:
 {
   "port": 8080,
   "services": [
-    "/home/ubuntu/github/its-the-vibe/rate-my",
-    "/home/ubuntu/github/its-the-vibe/another-service",
-    "/home/ubuntu/github/its-the-vibe/yet-another-service"
+    "its-the-vibe/rate-my",
+    "its-the-vibe/another-service",
+    "its-the-vibe/yet-another-service"
   ]
 }
 ```
 
-**Note:** The service paths should match the `com.docker.compose.project.working_dir` label from your Docker Compose containers.
+**Note:** The service paths should be in the format `orgname/servicename` (the last two path segments of the `com.docker.compose.project.working_dir` label from your Docker Compose containers).
 
 ## Usage
 
