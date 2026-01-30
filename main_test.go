@@ -61,3 +61,17 @@ func TestExtractWorkingDir(t *testing.T) {
 		})
 	}
 }
+
+func TestGetContainerStats(t *testing.T) {
+	// This is an integration test that requires Docker to be running
+	// We'll skip it if Docker is not available
+	statsMap, err := getContainerStats()
+	if err != nil {
+		t.Skipf("Skipping test - Docker may not be available: %v", err)
+	}
+	// Verify the function returns a map (not nil)
+	if statsMap == nil {
+		t.Error("getContainerStats returned nil map")
+	}
+	// If we got here, Docker is available and the function returned a valid map
+}

@@ -24,10 +24,24 @@ type DockerContainer struct {
 	Names  string `json:"Names"`
 }
 
+// DockerStats represents container stats from `docker stats --format json --no-stream`
+type DockerStats struct {
+	Container   string `json:"Container"`
+	Name        string `json:"Name"`
+	CPUPerc     string `json:"CPUPerc"`
+	MemUsage    string `json:"MemUsage"`
+	MemPerc     string `json:"MemPerc"`
+	NetIO       string `json:"NetIO"`
+	BlockIO     string `json:"BlockIO"`
+	PIDs        string `json:"PIDs"`
+}
+
 // ServiceStatus represents the status of a service
 type ServiceStatus struct {
 	Name    string
 	Running bool
+	CPUPerc string
+	MemUsage string
 }
 
 var config Config
@@ -70,7 +84,13 @@ func loadConfig(path string) error {
 	return nil
 }
 
-func getRunningServices() ([]string, error) {
+// ContainerInfo holds both service name and container name
+type ContainerInfo struct {
+	ServiceName   string
+	ContainerName string
+}
+
+func getRunningServices() ([]ContainerInfo, error) {
 	cmd := exec.Command("docker", "ps", "--format", "json")
 	output, err := cmd.Output()
 	if err != nil {
@@ -80,7 +100,7 @@ func getRunningServices() ([]string, error) {
 		return nil, fmt.Errorf("executing docker ps: %w (is Docker installed and running?)", err)
 	}
 
-	var runningServices []string
+	var runningServices []ContainerInfo
 	lines := strings.Split(string(output), "\n")
 
 	for _, line := range lines {
@@ -97,7 +117,10 @@ func getRunningServices() ([]string, error) {
 		// Extract working_dir from labels
 		workingDir := extractWorkingDir(container.Labels)
 		if workingDir != "" {
-			runningServices = append(runningServices, workingDir)
+			runningServices = append(runningServices, ContainerInfo{
+				ServiceName:   workingDir,
+				ContainerName: container.Names,
+			})
 		}
 	}
 
@@ -130,23 +153,77 @@ func extractWorkingDir(labels string) string {
 	return ""
 }
 
+// getContainerStats fetches resource usage statistics for all running containers
+// using `docker stats --format json --no-stream`. Returns a map of container stats
+// keyed by container name.
+func getContainerStats() (map[string]DockerStats, error) {
+	cmd := exec.Command("docker", "stats", "--format", "json", "--no-stream")
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("executing docker stats: %w (stderr: %s)", err, string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("executing docker stats: %w", err)
+	}
+
+	statsMap := make(map[string]DockerStats)
+	lines := strings.Split(string(output), "\n")
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		var stats DockerStats
+		if err := json.Unmarshal([]byte(line), &stats); err != nil {
+			log.Printf("Warning: failed to parse stats JSON: %v", err)
+			continue
+		}
+
+		// Store stats by container name
+		statsMap[stats.Name] = stats
+	}
+
+	return statsMap, nil
+}
+
 func getServiceStatuses() ([]ServiceStatus, error) {
 	runningServices, err := getRunningServices()
 	if err != nil {
 		return nil, err
 	}
 
-	runningMap := make(map[string]bool)
-	for _, service := range runningServices {
-		runningMap[service] = true
+	// Get stats for all running containers
+	statsMap, err := getContainerStats()
+	if err != nil {
+		log.Printf("Warning: failed to get container stats: %v", err)
+		// Continue without stats rather than failing completely
+		statsMap = make(map[string]DockerStats)
+	}
+
+	// Create a map of service names to container info
+	runningMap := make(map[string]ContainerInfo)
+	for _, info := range runningServices {
+		runningMap[info.ServiceName] = info
 	}
 
 	var statuses []ServiceStatus
 	for _, expectedService := range config.Services {
-		statuses = append(statuses, ServiceStatus{
+		status := ServiceStatus{
 			Name:    expectedService,
-			Running: runningMap[expectedService],
-		})
+			Running: false,
+		}
+
+		if containerInfo, exists := runningMap[expectedService]; exists {
+			status.Running = true
+			// Get stats for this container
+			if stats, hasStats := statsMap[containerInfo.ContainerName]; hasStats {
+				status.CPUPerc = stats.CPUPerc
+				status.MemUsage = stats.MemUsage
+			}
+		}
+
+		statuses = append(statuses, status)
 	}
 
 	return statuses, nil
@@ -274,6 +351,32 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             color: #ef4444;
         }
 
+        .resource-stats {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e5e7eb;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .resource-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .resource-label {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-bottom: 2px;
+        }
+
+        .resource-value {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #374151;
+        }
+
         .summary {
             background: white;
             border-radius: 10px;
@@ -362,6 +465,24 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
                 <div class="status-text {{if .Running}}running{{else}}stopped{{end}}">
                     {{if .Running}}✓ Running{{else}}✗ Stopped{{end}}
                 </div>
+                {{if .Running}}
+                {{if or .CPUPerc .MemUsage}}
+                <div class="resource-stats">
+                    {{if .CPUPerc}}
+                    <div class="resource-item">
+                        <div class="resource-label">CPU</div>
+                        <div class="resource-value">{{.CPUPerc}}</div>
+                    </div>
+                    {{end}}
+                    {{if .MemUsage}}
+                    <div class="resource-item">
+                        <div class="resource-label">Memory</div>
+                        <div class="resource-value">{{.MemUsage}}</div>
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
+                {{end}}
             </div>
             {{end}}
         </div>
