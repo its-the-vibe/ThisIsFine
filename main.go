@@ -153,6 +153,9 @@ func extractWorkingDir(labels string) string {
 	return ""
 }
 
+// getContainerStats fetches resource usage statistics for all running containers
+// using `docker stats --format json --no-stream`. Returns a map of container stats
+// keyed by container name.
 func getContainerStats() (map[string]DockerStats, error) {
 	cmd := exec.Command("docker", "stats", "--format", "json", "--no-stream")
 	output, err := cmd.Output()
