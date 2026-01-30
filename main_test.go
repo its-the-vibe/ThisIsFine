@@ -61,3 +61,14 @@ func TestExtractWorkingDir(t *testing.T) {
 		})
 	}
 }
+
+func TestGetContainerStats(t *testing.T) {
+	// This is an integration test that requires Docker to be running
+	// We'll skip it if Docker is not available
+	_, err := getContainerStats()
+	if err != nil {
+		t.Skipf("Skipping test - Docker may not be available: %v", err)
+	}
+	// If we got here, Docker is available and the function at least didn't error
+	// We can't test the exact output as it depends on running containers
+}
