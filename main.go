@@ -22,6 +22,7 @@ type Config struct {
 type DockerContainer struct {
 	Labels string `json:"Labels"`
 	Names  string `json:"Names"`
+	Status string `json:"Status"`
 }
 
 // DockerStats represents container stats from `docker stats --format json --no-stream`
@@ -38,10 +39,11 @@ type DockerStats struct {
 
 // ServiceStatus represents the status of a service
 type ServiceStatus struct {
-	Name    string
-	Running bool
-	CPUPerc string
+	Name     string
+	Running  bool
+	CPUPerc  string
 	MemUsage string
+	Status   string
 }
 
 var config Config
@@ -88,6 +90,7 @@ func loadConfig(path string) error {
 type ContainerInfo struct {
 	ServiceName   string
 	ContainerName string
+	Status        string
 }
 
 func getRunningServices() ([]ContainerInfo, error) {
@@ -120,6 +123,7 @@ func getRunningServices() ([]ContainerInfo, error) {
 			runningServices = append(runningServices, ContainerInfo{
 				ServiceName:   workingDir,
 				ContainerName: container.Names,
+				Status:        container.Status,
 			})
 		}
 	}
@@ -216,6 +220,7 @@ func getServiceStatuses() ([]ServiceStatus, error) {
 
 		if containerInfo, exists := runningMap[expectedService]; exists {
 			status.Running = true
+			status.Status = containerInfo.Status
 			// Get stats for this container
 			if stats, hasStats := statsMap[containerInfo.ContainerName]; hasStats {
 				status.CPUPerc = stats.CPUPerc
@@ -351,6 +356,12 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             color: #ef4444;
         }
 
+        .uptime-info {
+            font-size: 0.85rem;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+
         .resource-stats {
             margin-top: 12px;
             padding-top: 12px;
@@ -465,6 +476,11 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
                 <div class="status-text {{if .Running}}running{{else}}stopped{{end}}">
                     {{if .Running}}✓ Running{{else}}✗ Stopped{{end}}
                 </div>
+                {{if .Status}}
+                <div class="uptime-info">
+                    {{.Status}}
+                </div>
+                {{end}}
                 {{if .Running}}
                 {{if or .CPUPerc .MemUsage}}
                 <div class="resource-stats">
