@@ -73,6 +73,31 @@ Or with a custom configuration file:
 
 Then open your browser to `http://localhost:8080` (or your configured port).
 
+### API Endpoints
+
+The application provides the following HTTP endpoints:
+
+- **`GET /`** - Web dashboard showing the status of configured services
+- **`GET /ps`** - JSON API endpoint that returns the output of `docker ps --format json`
+
+#### `/ps` Endpoint
+
+The `/ps` endpoint provides direct access to Docker container information in JSON format. This is useful for monitoring tools and integrations that need programmatic access to container status.
+
+**Example request:**
+```bash
+curl http://localhost:8080/ps
+```
+
+**Example response:**
+```json
+{"Command":"\"nginx -g 'daemon of…\"","CreatedAt":"2026-02-03 14:23:45 -0800 PST","ID":"a1b2c3d4e5f6","Image":"nginx:latest","Labels":"com.docker.compose.project=myproject","LocalVolumes":"2","Mounts":"/var/lib/docker/volumes/...","Names":"web-server","Networks":"bridge","Ports":"80/tcp, 443/tcp","RunningFor":"2 hours ago","Size":"0B (virtual 187MB)","State":"running","Status":"Up 2 hours"}
+```
+
+**Response format:** Each line is a separate JSON object representing a container (newline-delimited JSON).
+
+**Error handling:** Returns HTTP 500 with error message if Docker is unavailable or the command fails.
+
 ### Running as a systemd Service
 
 1. Copy the binary and configuration to the installation directory:

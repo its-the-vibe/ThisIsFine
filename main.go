@@ -59,6 +59,7 @@ func main() {
 
 	// Set up HTTP handlers
 	http.HandleFunc("/", statusHandler)
+	http.HandleFunc("/ps", psHandler)
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
 	// Start server
@@ -232,6 +233,29 @@ func getServiceStatuses() ([]ServiceStatus, error) {
 	}
 
 	return statuses, nil
+}
+
+func psHandler(w http.ResponseWriter, r *http.Request) {
+	// Execute docker ps --format json
+	cmd := exec.Command("docker", "ps", "--format", "json")
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			http.Error(w, fmt.Sprintf("docker ps failed: %s", string(exitErr.Stderr)), http.StatusInternalServerError)
+			return
+		}
+		http.Error(w, fmt.Sprintf("docker ps failed: %v (is Docker installed and running?)", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Set content type to application/json
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	// Write the raw output from docker ps
+	if _, err := w.Write(output); err != nil {
+		log.Printf("Error writing response: %v", err)
+	}
 }
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
