@@ -253,7 +253,9 @@ func psHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	
 	// Write the raw output from docker ps
-	w.Write(output)
+	if _, err := w.Write(output); err != nil {
+		log.Printf("Error writing response: %v", err)
+	}
 }
 
 func statusHandler(w http.ResponseWriter, r *http.Request) {
