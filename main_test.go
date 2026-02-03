@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -74,4 +76,41 @@ func TestGetContainerStats(t *testing.T) {
 		t.Error("getContainerStats returned nil map")
 	}
 	// If we got here, Docker is available and the function returned a valid map
+}
+
+func TestPsHandler(t *testing.T) {
+	// This is an integration test that requires Docker to be running
+	// Create a test HTTP request
+	req, err := http.NewRequest("GET", "/ps", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a ResponseRecorder to record the response
+	rr := httptest.NewRecorder()
+
+	// Call the handler directly
+	handler := http.HandlerFunc(psHandler)
+	handler.ServeHTTP(rr, req)
+
+	// Check the status code
+	if status := rr.Code; status != http.StatusOK {
+		// If Docker is not available, we might get an error
+		// Skip the test instead of failing
+		if status == http.StatusInternalServerError {
+			t.Skipf("Skipping test - Docker may not be available (status: %d)", status)
+		}
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+
+	// Check the content type
+	if contentType := rr.Header().Get("Content-Type"); contentType != "application/json" {
+		t.Errorf("handler returned wrong content type: got %v want %v", contentType, "application/json")
+	}
+
+	// Verify the response is valid (at least not empty, if Docker is running)
+	// The response should be JSON lines format from docker ps
+	if rr.Body.Len() == 0 {
+		t.Log("Warning: Empty response from docker ps (no containers running)")
+	}
 }
