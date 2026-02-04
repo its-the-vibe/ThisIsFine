@@ -60,6 +60,7 @@ func main() {
 	// Set up HTTP handlers
 	http.HandleFunc("/", statusHandler)
 	http.HandleFunc("/ps", psHandler)
+	http.HandleFunc("/stats", statsHandler)
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
 	// Start server
@@ -198,14 +199,6 @@ func getServiceStatuses() ([]ServiceStatus, error) {
 		return nil, err
 	}
 
-	// Get stats for all running containers
-	statsMap, err := getContainerStats()
-	if err != nil {
-		log.Printf("Warning: failed to get container stats: %v", err)
-		// Continue without stats rather than failing completely
-		statsMap = make(map[string]DockerStats)
-	}
-
 	// Create a map of service names to container info
 	runningMap := make(map[string]ContainerInfo)
 	for _, info := range runningServices {
@@ -222,11 +215,6 @@ func getServiceStatuses() ([]ServiceStatus, error) {
 		if containerInfo, exists := runningMap[expectedService]; exists {
 			status.Running = true
 			status.Status = containerInfo.Status
-			// Get stats for this container
-			if stats, hasStats := statsMap[containerInfo.ContainerName]; hasStats {
-				status.CPUPerc = stats.CPUPerc
-				status.MemUsage = stats.MemUsage
-			}
 		}
 
 		statuses = append(statuses, status)
@@ -255,6 +243,60 @@ func psHandler(w http.ResponseWriter, r *http.Request) {
 	// Write the raw output from docker ps
 	if _, err := w.Write(output); err != nil {
 		log.Printf("Error writing response: %v", err)
+	}
+}
+
+func statsHandler(w http.ResponseWriter, r *http.Request) {
+	// Get running services
+	runningServices, err := getRunningServices()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error getting running services: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Get stats for all running containers
+	statsMap, err := getContainerStats()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error getting container stats: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Create a map of service names to container info
+	runningMap := make(map[string]ContainerInfo)
+	for _, info := range runningServices {
+		runningMap[info.ServiceName] = info
+	}
+
+	// Build response with stats for configured services
+	type ServiceStats struct {
+		Name     string `json:"name"`
+		Running  bool   `json:"running"`
+		CPUPerc  string `json:"cpuPerc,omitempty"`
+		MemUsage string `json:"memUsage,omitempty"`
+	}
+
+	var response []ServiceStats
+	for _, expectedService := range config.Services {
+		stat := ServiceStats{
+			Name:    expectedService,
+			Running: false,
+		}
+
+		if containerInfo, exists := runningMap[expectedService]; exists {
+			stat.Running = true
+			// Get stats for this container
+			if stats, hasStats := statsMap[containerInfo.ContainerName]; hasStats {
+				stat.CPUPerc = stats.CPUPerc
+				stat.MemUsage = stats.MemUsage
+			}
+		}
+
+		response = append(response, stat)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding response: %v", err)
 	}
 }
 
@@ -312,6 +354,39 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             color: rgba(255, 255, 255, 0.9);
             margin-bottom: 20px;
             font-size: 0.9rem;
+        }
+
+        .toggle-container {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .toggle-button {
+            background: white;
+            border: none;
+            border-radius: 5px;
+            padding: 10px 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: all 0.2s;
+            color: #374151;
+        }
+
+        .toggle-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+
+        .toggle-button.active {
+            background: #10b981;
+            color: white;
+        }
+
+        .toggle-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
         }
 
         .services-grid {
@@ -390,9 +465,13 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             margin-top: 12px;
             padding-top: 12px;
             border-top: 1px solid #e5e7eb;
-            display: grid;
+            display: none;
             grid-template-columns: 1fr 1fr;
             gap: 8px;
+        }
+
+        .resource-stats.visible {
+            display: grid;
         }
 
         .resource-item {
@@ -472,6 +551,12 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             Auto-refresh: Reload the page to update status
         </div>
 
+        <div class="toggle-container">
+            <button id="statsToggle" class="toggle-button" onclick="toggleStats()">
+                Show Resource Stats
+            </button>
+        </div>
+
         <div class="summary">
             <h2>Summary</h2>
             <div class="summary-stats">
@@ -492,7 +577,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 
         <div class="services-grid">
             {{range .Services}}
-            <div class="service-card">
+            <div class="service-card" data-service-name="{{.Name}}">
                 <div class="service-header">
                     <div class="service-name">{{.Name}}</div>
                     <div class="status-indicator {{if .Running}}running{{else}}stopped{{end}}"></div>
@@ -506,27 +591,80 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
                 </div>
                 {{end}}
                 {{if .Running}}
-                {{if or .CPUPerc .MemUsage}}
-                <div class="resource-stats">
-                    {{if .CPUPerc}}
+                <div class="resource-stats" data-service-name="{{.Name}}">
                     <div class="resource-item">
                         <div class="resource-label">CPU</div>
-                        <div class="resource-value">{{.CPUPerc}}</div>
+                        <div class="resource-value cpu-value">-</div>
                     </div>
-                    {{end}}
-                    {{if .MemUsage}}
                     <div class="resource-item">
                         <div class="resource-label">Memory</div>
-                        <div class="resource-value">{{.MemUsage}}</div>
+                        <div class="resource-value mem-value">-</div>
                     </div>
-                    {{end}}
                 </div>
-                {{end}}
                 {{end}}
             </div>
             {{end}}
         </div>
     </div>
+
+    <script>
+        let statsEnabled = false;
+
+        async function toggleStats() {
+            const button = document.getElementById('statsToggle');
+            statsEnabled = !statsEnabled;
+
+            if (statsEnabled) {
+                button.classList.add('active');
+                button.textContent = 'Hide Resource Stats';
+                button.disabled = true;
+                await loadStats();
+                button.disabled = false;
+            } else {
+                button.classList.remove('active');
+                button.textContent = 'Show Resource Stats';
+                hideStats();
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch('/stats');
+                if (!response.ok) {
+                    throw new Error('Failed to fetch stats');
+                }
+                const stats = await response.json();
+
+                stats.forEach(service => {
+                    if (service.running) {
+                        const card = document.querySelector('.service-card[data-service-name="' + service.name + '"]');
+                        if (card) {
+                            const statsDiv = card.querySelector('.resource-stats[data-service-name="' + service.name + '"]');
+                            if (statsDiv) {
+                                const cpuValue = statsDiv.querySelector('.cpu-value');
+                                const memValue = statsDiv.querySelector('.mem-value');
+                                
+                                if (cpuValue) cpuValue.textContent = service.cpuPerc || '-';
+                                if (memValue) memValue.textContent = service.memUsage || '-';
+                                
+                                statsDiv.classList.add('visible');
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                alert('Failed to load resource stats. Please try again.');
+            }
+        }
+
+        function hideStats() {
+            const allStats = document.querySelectorAll('.resource-stats');
+            allStats.forEach(stats => {
+                stats.classList.remove('visible');
+            });
+        }
+    </script>
 </body>
 </html>
 `))
