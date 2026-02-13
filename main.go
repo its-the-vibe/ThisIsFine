@@ -27,23 +27,22 @@ type DockerContainer struct {
 
 // DockerStats represents container stats from `docker stats --format json --no-stream`
 type DockerStats struct {
-	Container   string `json:"Container"`
-	Name        string `json:"Name"`
-	CPUPerc     string `json:"CPUPerc"`
-	MemUsage    string `json:"MemUsage"`
-	MemPerc     string `json:"MemPerc"`
-	NetIO       string `json:"NetIO"`
-	BlockIO     string `json:"BlockIO"`
-	PIDs        string `json:"PIDs"`
+	Container string `json:"Container"`
+	Name      string `json:"Name"`
+	CPUPerc   string `json:"CPUPerc"`
+	MemUsage  string `json:"MemUsage"`
+	MemPerc   string `json:"MemPerc"`
+	NetIO     string `json:"NetIO"`
+	BlockIO   string `json:"BlockIO"`
+	PIDs      string `json:"PIDs"`
 }
 
 // ServiceStatus represents the status of a service
 type ServiceStatus struct {
-	Name     string
-	Running  bool
-	CPUPerc  string
-	MemUsage string
-	Status   string
+	Name      string
+	ShortName string
+	Running   bool
+	Status    string
 }
 
 var config Config
@@ -207,9 +206,15 @@ func getServiceStatuses() ([]ServiceStatus, error) {
 
 	var statuses []ServiceStatus
 	for _, expectedService := range config.Services {
+		// ShortName is the last segment after '/'
+		shortName := expectedService
+		if idx := strings.LastIndex(expectedService, "/"); idx != -1 && idx+1 < len(expectedService) {
+			shortName = expectedService[idx+1:]
+		}
 		status := ServiceStatus{
-			Name:    expectedService,
-			Running: false,
+			Name:      expectedService,
+			ShortName: shortName,
+			Running:   false,
 		}
 
 		if containerInfo, exists := runningMap[expectedService]; exists {
@@ -239,7 +244,7 @@ func psHandler(w http.ResponseWriter, r *http.Request) {
 	// Set content type to application/json
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	
+
 	// Write the raw output from docker ps
 	if _, err := w.Write(output); err != nil {
 		log.Printf("Error writing response: %v", err)
@@ -579,7 +584,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             {{range .Services}}
             <div class="service-card" data-service-name="{{.Name}}">
                 <div class="service-header">
-                    <div class="service-name">{{.Name}}</div>
+                    <div class="service-name">{{.ShortName}}</div>
                     <div class="status-indicator {{if .Running}}running{{else}}stopped{{end}}"></div>
                 </div>
                 <div class="status-text {{if .Running}}running{{else}}stopped{{end}}">
