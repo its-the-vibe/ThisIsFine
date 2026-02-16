@@ -14,8 +14,10 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	Port     int      `json:"port"`
-	Services []string `json:"services"`
+	Port            int      `json:"port"`
+	Services        []string `json:"services,omitempty"`        // Deprecated: use DockerServices
+	DockerServices  []string `json:"dockerServices,omitempty"`
+	SystemdServices []string `json:"systemdServices,omitempty"`
 }
 
 // DockerContainer represents a Docker container from `docker ps --format json`
@@ -43,6 +45,7 @@ type ServiceStatus struct {
 	ShortName string
 	Running   bool
 	Status    string
+	Type      string // "docker" or "systemd"
 }
 
 var config Config
@@ -60,6 +63,7 @@ func main() {
 	http.HandleFunc("/", statusHandler)
 	http.HandleFunc("/ps", psHandler)
 	http.HandleFunc("/stats", statsHandler)
+	http.HandleFunc("/systemctl-is-active", systemctlIsActiveHandler)
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
 	// Start server
@@ -82,6 +86,11 @@ func loadConfig(path string) error {
 
 	if config.Port == 0 {
 		config.Port = 8080
+	}
+
+	// Backward compatibility: migrate old "services" to "dockerServices"
+	if len(config.Services) > 0 && len(config.DockerServices) == 0 {
+		config.DockerServices = config.Services
 	}
 
 	return nil
@@ -205,7 +214,9 @@ func getServiceStatuses() ([]ServiceStatus, error) {
 	}
 
 	var statuses []ServiceStatus
-	for _, expectedService := range config.Services {
+	
+	// Add Docker services
+	for _, expectedService := range config.DockerServices {
 		// ShortName is the last segment after '/'
 		shortName := expectedService
 		if idx := strings.LastIndex(expectedService, "/"); idx != -1 && idx+1 < len(expectedService) {
@@ -215,6 +226,7 @@ func getServiceStatuses() ([]ServiceStatus, error) {
 			Name:      expectedService,
 			ShortName: shortName,
 			Running:   false,
+			Type:      "docker",
 		}
 
 		if containerInfo, exists := runningMap[expectedService]; exists {
@@ -224,8 +236,55 @@ func getServiceStatuses() ([]ServiceStatus, error) {
 
 		statuses = append(statuses, status)
 	}
+	
+	// Add systemd services
+	if len(config.SystemdServices) > 0 {
+		systemdStatuses, err := getSystemdStatuses(config.SystemdServices)
+		if err != nil {
+			log.Printf("Warning: failed to get systemd statuses: %v", err)
+		} else {
+			statuses = append(statuses, systemdStatuses...)
+		}
+	}
 
 	return statuses, nil
+}
+
+// getSystemdStatuses checks the status of systemd services
+func getSystemdStatuses(services []string) ([]ServiceStatus, error) {
+	if len(services) == 0 {
+		return nil, nil
+	}
+
+	// Use systemctl is-active to check all services at once
+	args := append([]string{"is-active"}, services...)
+	cmd := exec.Command("systemctl", args...)
+	output, err := cmd.Output()
+	
+	// systemctl is-active returns non-zero exit code if any service is not active
+	// but still provides output for each service, so we ignore the error
+	
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	var statuses []ServiceStatus
+	
+	for i, service := range services {
+		status := ServiceStatus{
+			Name:      service,
+			ShortName: service,
+			Type:      "systemd",
+			Running:   false,
+		}
+		
+		if i < len(lines) {
+			state := strings.TrimSpace(lines[i])
+			status.Status = state
+			status.Running = state == "active"
+		}
+		
+		statuses = append(statuses, status)
+	}
+	
+	return statuses, err
 }
 
 func psHandler(w http.ResponseWriter, r *http.Request) {
@@ -248,6 +307,42 @@ func psHandler(w http.ResponseWriter, r *http.Request) {
 	// Write the raw output from docker ps
 	if _, err := w.Write(output); err != nil {
 		log.Printf("Error writing response: %v", err)
+	}
+}
+
+func systemctlIsActiveHandler(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameter for services
+	servicesParam := r.URL.Query().Get("services")
+	if servicesParam == "" {
+		http.Error(w, "Missing 'services' query parameter", http.StatusBadRequest)
+		return
+	}
+	
+	services := strings.Split(servicesParam, ",")
+	for i, s := range services {
+		services[i] = strings.TrimSpace(s)
+	}
+	
+	// Use systemctl is-active to check all services
+	args := append([]string{"is-active"}, services...)
+	cmd := exec.Command("systemctl", args...)
+	output, _ := cmd.Output()
+	
+	// Parse output - one line per service
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	result := make(map[string]string)
+	
+	for i, service := range services {
+		if i < len(lines) {
+			result[service] = strings.TrimSpace(lines[i])
+		} else {
+			result[service] = "unknown"
+		}
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		log.Printf("Error encoding response: %v", err)
 	}
 }
 
@@ -281,7 +376,7 @@ func statsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var response []ServiceStats
-	for _, expectedService := range config.Services {
+	for _, expectedService := range config.DockerServices {
 		stat := ServiceStats{
 			Name:    expectedService,
 			Running: false,
@@ -466,6 +561,25 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             margin-top: 4px;
         }
 
+        .service-type {
+            display: inline-block;
+            font-size: 0.7rem;
+            padding: 2px 8px;
+            border-radius: 3px;
+            margin-top: 6px;
+            font-weight: 500;
+        }
+
+        .service-type.docker {
+            background: #2563eb;
+            color: white;
+        }
+
+        .service-type.systemd {
+            background: #059669;
+            color: white;
+        }
+
         .resource-stats {
             margin-top: 12px;
             padding-top: 12px;
@@ -550,7 +664,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 </head>
 <body>
     <div class="container">
-        <h1>{{.Icon}} Docker Service Status Dashboard</h1>
+        <h1>{{.Icon}} Service Status Dashboard</h1>
         
         <div class="refresh-info">
             Auto-refresh: Reload the page to update status
@@ -582,7 +696,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 
         <div class="services-grid">
             {{range .Services}}
-            <div class="service-card" data-service-name="{{.Name}}">
+            <div class="service-card" data-service-name="{{.Name}}" data-service-type="{{.Type}}">
                 <div class="service-header">
                     <div class="service-name">{{.ShortName}}</div>
                     <div class="status-indicator {{if .Running}}running{{else}}stopped{{end}}"></div>
@@ -590,12 +704,13 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
                 <div class="status-text {{if .Running}}running{{else}}stopped{{end}}">
                     {{if .Running}}✓ Running{{else}}✗ Stopped{{end}}
                 </div>
+                <div class="service-type {{.Type}}">{{.Type}}</div>
                 {{if .Status}}
                 <div class="uptime-info">
                     {{.Status}}
                 </div>
                 {{end}}
-                {{if .Running}}
+                {{if and .Running (eq .Type "docker")}}
                 <div class="resource-stats" data-service-name="{{.Name}}">
                     <div class="resource-item">
                         <div class="resource-label">CPU</div>

@@ -1,23 +1,26 @@
 # ThisIsFine 🐳
 
-A simple, self-contained Docker service status dashboard written in Go. Monitor which of your Docker Compose services are running at a glance.
+A simple, self-contained service status dashboard written in Go. Monitor both Docker Compose services and systemd services at a glance.
 
 ![Dashboard Preview](https://img.shields.io/badge/status-active-success)
 
 ## Features
 
 - 🚀 Simple web-based status dashboard
+- 🐳 Docker Compose service monitoring
+- ⚙️ systemd service monitoring  
 - 📊 Visual status indicators for each service
-- 🔄 Real-time service status checking via `docker ps`
-- ⚙️ Configurable port and service list
+- 🔄 Real-time service status checking
+- 💻 Resource usage stats for Docker containers (CPU, Memory)
 - 🎨 Clean, responsive UI that scales well with 20+ services
-- 🔧 Runs as a systemd service
+- 🔧 Configurable port and service lists
+- 📡 REST API endpoints for integration
 
 ## Requirements
 
 - Go 1.25 or later
-- Docker installed and running
-- Docker Compose services with standard labels
+- Docker installed and running (for Docker service monitoring)
+- systemd (for systemd service monitoring)
 
 ## Installation
 
@@ -47,15 +50,24 @@ Edit `config.json` to list your expected services:
 ```json
 {
   "port": 8080,
-  "services": [
+  "dockerServices": [
     "its-the-vibe/rate-my",
     "its-the-vibe/another-service",
     "its-the-vibe/yet-another-service"
+  ],
+  "systemdServices": [
+    "nginx",
+    "postgresql",
+    "redis"
   ]
 }
 ```
 
-**Note:** The service paths should be in the format `orgname/servicename` (the last two path segments of the `com.docker.compose.project.working_dir` label from your Docker Compose containers).
+**Note:** 
+- Docker service paths should be in the format `orgname/servicename` (the last two path segments of the `com.docker.compose.project.working_dir` label from your Docker Compose containers).
+- systemd services should be the service unit names (e.g., `nginx`, `postgresql.service`).
+
+**Backward Compatibility:** The old `services` field is still supported for backward compatibility and will be automatically migrated to `dockerServices` when the config is loaded.
 
 ## Usage
 
@@ -79,6 +91,8 @@ The application provides the following HTTP endpoints:
 
 - **`GET /`** - Web dashboard showing the status of configured services
 - **`GET /ps`** - JSON API endpoint that returns the output of `docker ps --format json`
+- **`GET /stats`** - JSON API endpoint that returns resource usage statistics for Docker services
+- **`GET /systemctl-is-active?services=service1,service2`** - JSON API endpoint that returns systemd service statuses
 
 #### `/ps` Endpoint
 
@@ -97,6 +111,54 @@ curl http://localhost:8080/ps
 **Response format:** Each line is a separate JSON object representing a container (newline-delimited JSON).
 
 **Error handling:** Returns HTTP 500 with error message if Docker is unavailable or the command fails.
+
+#### `/stats` Endpoint
+
+The `/stats` endpoint provides resource usage statistics for Docker services configured in the config file.
+
+**Example request:**
+```bash
+curl http://localhost:8080/stats
+```
+
+**Example response:**
+```json
+[
+  {
+    "name": "its-the-vibe/rate-my",
+    "running": true,
+    "cpuPerc": "0.50%",
+    "memUsage": "128MiB / 2GiB"
+  },
+  {
+    "name": "its-the-vibe/service-1",
+    "running": false
+  }
+]
+```
+
+#### `/systemctl-is-active` Endpoint
+
+The `/systemctl-is-active` endpoint checks the status of systemd services using `systemctl is-active`.
+
+**Example request:**
+```bash
+curl "http://localhost:8080/systemctl-is-active?services=nginx,postgresql,redis"
+```
+
+**Example response:**
+```json
+{
+  "nginx": "active",
+  "postgresql": "active",
+  "redis": "inactive"
+}
+```
+
+**Query parameters:**
+- `services` (required): Comma-separated list of systemd service names to check
+
+**Response format:** JSON object mapping each service name to its status (`active`, `inactive`, `failed`, etc.).
 
 ### Running as a systemd Service
 
@@ -127,13 +189,24 @@ sudo systemctl status thisisfine
 
 ## How It Works
 
-1. The application reads the list of expected services from `config.json`
+### Docker Service Monitoring
+
+1. The application reads the list of expected Docker services from `dockerServices` in `config.json`
 2. When you access the dashboard, it executes `docker ps --format json`
 3. For each running container, it extracts the `com.docker.compose.project.working_dir` label
 4. It compares the expected services against the running services
-5. The dashboard displays each service with a visual indicator:
-   - 🟢 Green = Service is running
-   - 🔴 Red = Service is stopped
+5. For Docker services, resource stats (CPU, memory) can be displayed by clicking "Show Resource Stats"
+
+### systemd Service Monitoring
+
+1. The application reads the list of expected systemd services from `systemdServices` in `config.json`
+2. It uses `systemctl is-active <service>` to check the status of each service
+3. Services are displayed with their current status (active, inactive, failed, etc.)
+
+The dashboard displays each service with visual indicators:
+- 🟢 Green = Service is running/active
+- 🔴 Red = Service is stopped/inactive
+- Badge shows service type (docker or systemd)
 
 ## Configuration
 
@@ -142,7 +215,9 @@ The `config.json` file supports the following options:
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `port` | integer | 8080 | The port on which the web server listens |
-| `services` | array of strings | [] | List of expected service working directories |
+| `dockerServices` | array of strings | [] | List of Docker Compose service paths to monitor |
+| `systemdServices` | array of strings | [] | List of systemd service names to monitor |
+| `services` | array of strings | [] | **Deprecated:** Use `dockerServices` instead. Automatically migrated on load. |
 
 ## Development
 
