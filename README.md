@@ -63,7 +63,7 @@ Edit `config.json` to list your expected services:
 }
 ```
 
-**Note:** 
+**Note:**
 - Docker service paths should be in the format `orgname/servicename` (the last two path segments of the `com.docker.compose.project.working_dir` label from your Docker Compose containers).
 - systemd services should be the service unit names (e.g., `nginx`, `postgresql.service`).
 
