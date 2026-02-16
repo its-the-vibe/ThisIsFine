@@ -7,6 +7,40 @@ import (
 	"testing"
 )
 
+func TestIsValidServiceName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"Valid simple name", "nginx", true},
+		{"Valid with hyphen", "my-service", true},
+		{"Valid with underscore", "my_service", true},
+		{"Valid with dot", "nginx.service", true},
+		{"Valid with @", "user@.service", true},
+		{"Valid with colon", "service:name", true},
+		{"Valid with backslash", "service\\name", true},
+		{"Empty string", "", false},
+		{"With spaces", "my service", false},
+		{"With semicolon", "service;rm -rf", false},
+		{"With pipe", "service|echo", false},
+		{"With ampersand", "service&echo", false},
+		{"With dollar", "service$var", false},
+		{"With backtick", "service`cmd`", false},
+		{"With parenthesis", "service(cmd)", false},
+		{"Too long", string(make([]byte, 257)), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isValidServiceName(tt.input)
+			if result != tt.expected {
+				t.Errorf("isValidServiceName(%q) = %v, want %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
 func TestExtractWorkingDir(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -160,6 +194,18 @@ func TestSystemctlIsActiveHandler(t *testing.T) {
 			queryString:    "services=dbus,systemd-journald",
 			expectedStatus: http.StatusOK,
 			checkResponse:  true,
+		},
+		{
+			name:           "Invalid service name with semicolon",
+			queryString:    "services=nginx;rm+-rf",
+			expectedStatus: http.StatusBadRequest,
+			checkResponse:  false,
+		},
+		{
+			name:           "Invalid service name with pipe",
+			queryString:    "services=nginx|echo+hack",
+			expectedStatus: http.StatusBadRequest,
+			checkResponse:  false,
 		},
 	}
 

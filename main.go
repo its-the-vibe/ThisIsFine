@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -49,6 +50,19 @@ type ServiceStatus struct {
 }
 
 var config Config
+
+// validServiceNameRegex defines allowed characters for systemd service names
+// Systemd unit names typically allow alphanumeric, hyphens, underscores, dots, @, and backslashes
+var validServiceNameRegex = regexp.MustCompile(`^[a-zA-Z0-9@_:.\-\\]+$`)
+
+// isValidServiceName validates that a service name contains only safe characters
+func isValidServiceName(name string) bool {
+	// Reject empty names or names that are too long
+	if name == "" || len(name) > 256 {
+		return false
+	}
+	return validServiceNameRegex.MatchString(name)
+}
 
 func main() {
 	configPath := flag.String("config", "config.json", "Path to configuration file")
@@ -256,8 +270,23 @@ func getSystemdStatuses(services []string) ([]ServiceStatus, error) {
 		return nil, nil
 	}
 
+	// Validate all service names to prevent command injection
+	validServices := make([]string, 0, len(services))
+	for _, service := range services {
+		if !isValidServiceName(service) {
+			log.Printf("Warning: invalid service name '%s' - skipping", service)
+			continue
+		}
+		validServices = append(validServices, service)
+	}
+	
+	if len(validServices) == 0 {
+		log.Printf("Warning: no valid service names provided")
+		return nil, nil
+	}
+
 	// Use systemctl is-active to check all services at once
-	args := append([]string{"is-active"}, services...)
+	args := append([]string{"is-active"}, validServices...)
 	cmd := exec.Command("systemctl", args...)
 	output, err := cmd.Output()
 	
@@ -271,7 +300,7 @@ func getSystemdStatuses(services []string) ([]ServiceStatus, error) {
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	var statuses []ServiceStatus
 	
-	for i, service := range services {
+	for i, service := range validServices {
 		status := ServiceStatus{
 			Name:      service,
 			ShortName: service,
@@ -325,12 +354,27 @@ func systemctlIsActiveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	services := strings.Split(servicesParam, ",")
-	for i, s := range services {
-		services[i] = strings.TrimSpace(s)
+	validServices := make([]string, 0, len(services))
+	for _, s := range services {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		// Validate service name to prevent command injection
+		if !isValidServiceName(s) {
+			http.Error(w, fmt.Sprintf("Invalid service name: %s", s), http.StatusBadRequest)
+			return
+		}
+		validServices = append(validServices, s)
+	}
+	
+	if len(validServices) == 0 {
+		http.Error(w, "No valid service names provided", http.StatusBadRequest)
+		return
 	}
 	
 	// Use systemctl is-active to check all services
-	args := append([]string{"is-active"}, services...)
+	args := append([]string{"is-active"}, validServices...)
 	cmd := exec.Command("systemctl", args...)
 	output, err := cmd.Output()
 	
@@ -343,7 +387,7 @@ func systemctlIsActiveHandler(w http.ResponseWriter, r *http.Request) {
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	result := make(map[string]string)
 	
-	for i, service := range services {
+	for i, service := range validServices {
 		if i < len(lines) && lines[i] != "" {
 			result[service] = strings.TrimSpace(lines[i])
 		} else {
