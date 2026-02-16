@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func TestIsValidServiceName(t *testing.T) {
 		{"With dollar", "service$var", false},
 		{"With backtick", "service`cmd`", false},
 		{"With parenthesis", "service(cmd)", false},
-		{"Too long", string(make([]byte, 257)), false},
+		{"Too long", strings.Repeat("a", 257), false},
 	}
 
 	for _, tt := range tests {

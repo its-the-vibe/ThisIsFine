@@ -294,7 +294,11 @@ func getSystemdStatuses(services []string) ([]ServiceStatus, error) {
 	// but still provides output for each service. We check if output is empty to detect
 	// if systemctl is unavailable vs. services being inactive.
 	if err != nil && len(output) == 0 {
-		log.Printf("Warning: systemctl may not be available or failed to execute: %v", err)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			log.Printf("Warning: systemctl command failed (may not be available on this system): %v", string(exitErr.Stderr))
+		} else {
+			log.Printf("Warning: systemctl command failed to execute: %v", err)
+		}
 	}
 	
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
@@ -380,7 +384,11 @@ func systemctlIsActiveHandler(w http.ResponseWriter, r *http.Request) {
 	
 	// Log if systemctl is completely unavailable
 	if err != nil && len(output) == 0 {
-		log.Printf("Warning: systemctl may not be available or failed to execute: %v", err)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			log.Printf("Warning: systemctl command failed (may not be available on this system): %v", string(exitErr.Stderr))
+		} else {
+			log.Printf("Warning: systemctl command failed to execute: %v", err)
+		}
 	}
 	
 	// Parse output - one line per service
