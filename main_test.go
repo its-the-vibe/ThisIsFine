@@ -83,31 +83,23 @@ func TestGetSystemdStatuses(t *testing.T) {
 	tests := []struct {
 		name     string
 		services []string
-		skipTest bool
 	}{
 		{
 			name:     "Empty service list",
 			services: []string{},
-			skipTest: false,
 		},
 		{
 			name:     "Single service",
 			services: []string{"dbus"},
-			skipTest: false,
 		},
 		{
 			name:     "Multiple services",
 			services: []string{"dbus", "systemd-journald"},
-			skipTest: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.skipTest {
-				t.Skip("Skipping test")
-			}
-			
 			statuses, err := getSystemdStatuses(tt.services)
 			
 			if len(tt.services) == 0 {
@@ -136,9 +128,9 @@ func TestGetSystemdStatuses(t *testing.T) {
 				}
 			}
 			
-			// If there's an error, it's likely that systemctl is not available
+			// The function should always return nil error now
 			if err != nil {
-				t.Logf("Warning: systemctl may not be available: %v", err)
+				t.Errorf("Expected nil error, got: %v", err)
 			}
 		})
 	}

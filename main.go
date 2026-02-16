@@ -259,10 +259,11 @@ func getSystemdStatuses(services []string) ([]ServiceStatus, error) {
 	// Use systemctl is-active to check all services at once
 	args := append([]string{"is-active"}, services...)
 	cmd := exec.Command("systemctl", args...)
-	output, err := cmd.Output()
+	output, _ := cmd.Output()
 	
-	// systemctl is-active returns non-zero exit code if any service is not active
-	// but still provides output for each service, so we ignore the error
+	// Note: systemctl is-active returns non-zero exit code if any service is not active,
+	// but still provides output for each service, so we ignore the error.
+	// If systemctl is not available, output will be empty.
 	
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	var statuses []ServiceStatus
@@ -275,16 +276,18 @@ func getSystemdStatuses(services []string) ([]ServiceStatus, error) {
 			Running:   false,
 		}
 		
-		if i < len(lines) {
+		if i < len(lines) && lines[i] != "" {
 			state := strings.TrimSpace(lines[i])
 			status.Status = state
 			status.Running = state == "active"
+		} else {
+			status.Status = "unknown"
 		}
 		
 		statuses = append(statuses, status)
 	}
 	
-	return statuses, err
+	return statuses, nil
 }
 
 func psHandler(w http.ResponseWriter, r *http.Request) {
