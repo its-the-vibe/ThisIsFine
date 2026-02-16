@@ -259,11 +259,14 @@ func getSystemdStatuses(services []string) ([]ServiceStatus, error) {
 	// Use systemctl is-active to check all services at once
 	args := append([]string{"is-active"}, services...)
 	cmd := exec.Command("systemctl", args...)
-	output, _ := cmd.Output()
+	output, err := cmd.Output()
 	
 	// Note: systemctl is-active returns non-zero exit code if any service is not active,
-	// but still provides output for each service, so we ignore the error.
-	// If systemctl is not available, output will be empty.
+	// but still provides output for each service. We check if output is empty to detect
+	// if systemctl is unavailable vs. services being inactive.
+	if err != nil && len(output) == 0 {
+		log.Printf("Warning: systemctl may not be available or failed to execute: %v", err)
+	}
 	
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	var statuses []ServiceStatus
@@ -329,14 +332,19 @@ func systemctlIsActiveHandler(w http.ResponseWriter, r *http.Request) {
 	// Use systemctl is-active to check all services
 	args := append([]string{"is-active"}, services...)
 	cmd := exec.Command("systemctl", args...)
-	output, _ := cmd.Output()
+	output, err := cmd.Output()
+	
+	// Log if systemctl is completely unavailable
+	if err != nil && len(output) == 0 {
+		log.Printf("Warning: systemctl may not be available or failed to execute: %v", err)
+	}
 	
 	// Parse output - one line per service
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	result := make(map[string]string)
 	
 	for i, service := range services {
-		if i < len(lines) {
+		if i < len(lines) && lines[i] != "" {
 			result[service] = strings.TrimSpace(lines[i])
 		} else {
 			result[service] = "unknown"
