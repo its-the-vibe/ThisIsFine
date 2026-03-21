@@ -12,6 +12,7 @@ A simple, self-contained service status dashboard written in Go. Monitor both Do
 - 📊 Visual status indicators for each service
 - 🔄 Real-time service status checking
 - 💻 Resource usage stats for Docker containers (CPU, Memory)
+- 🖥️ System resource summary (CPU, memory, and disk usage) on the dashboard
 - 🎨 Clean, responsive UI that scales well with 20+ services
 - 🔧 Configurable port and service lists
 - 📡 REST API endpoints for integration
@@ -92,6 +93,7 @@ The application provides the following HTTP endpoints:
 - **`GET /`** - Web dashboard showing the status of configured services
 - **`GET /ps`** - JSON API endpoint that returns the output of `docker ps --format json`
 - **`GET /stats`** - JSON API endpoint that returns resource usage statistics for Docker services
+- **`GET /system-stats`** - JSON API endpoint that returns overall system CPU, memory, and disk usage
 - **`GET /systemctl-is-active?services=service1,service2`** - JSON API endpoint that returns systemd service statuses
 
 #### `/ps` Endpoint
@@ -136,6 +138,47 @@ curl http://localhost:8080/stats
   }
 ]
 ```
+
+#### `/system-stats` Endpoint
+
+The `/system-stats` endpoint returns overall system CPU, memory, and disk usage as JSON. This is useful for monitoring the host health independently of individual services.
+
+**Example request:**
+```bash
+curl http://localhost:8080/system-stats
+```
+
+**Example response:**
+```json
+{
+  "cpuUsagePercent": 12.5,
+  "memUsedBytes": 2147483648,
+  "memTotalBytes": 8589934592,
+  "memUsagePercent": 25.0,
+  "disks": [
+    {
+      "path": "/",
+      "usedBytes": 21474836480,
+      "totalBytes": 107374182400,
+      "usagePercent": 20.0
+    },
+    {
+      "path": "/var/lib/docker",
+      "usedBytes": 5368709120,
+      "totalBytes": 107374182400,
+      "usagePercent": 5.0
+    }
+  ]
+}
+```
+
+**Response fields:**
+- `cpuUsagePercent`: Overall CPU usage percentage (sampled over ~200 ms)
+- `memUsedBytes` / `memTotalBytes`: Memory used and total in bytes
+- `memUsagePercent`: Memory usage percentage
+- `disks`: Array of disk stats for `/` and `/var/lib/docker` (path may be absent if the filesystem is unavailable)
+
+**Error handling:** Returns HTTP 500 with error message if `/proc/stat` or `/proc/meminfo` are unavailable.
 
 #### `/systemctl-is-active` Endpoint
 
