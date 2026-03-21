@@ -10,7 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // Config represents the application configuration
@@ -49,6 +52,36 @@ type ServiceStatus struct {
 	Type      string // "docker" or "systemd"
 }
 
+// SystemStats holds overall system resource usage
+type SystemStats struct {
+	CPUUsagePercent float64    `json:"cpuUsagePercent"`
+	MemUsedBytes    uint64     `json:"memUsedBytes"`
+	MemTotalBytes   uint64     `json:"memTotalBytes"`
+	MemUsagePercent float64    `json:"memUsagePercent"`
+	Disks           []DiskStat `json:"disks"`
+}
+
+// DiskStat holds disk usage for a single filesystem path
+type DiskStat struct {
+	Path         string  `json:"path"`
+	UsedBytes    uint64  `json:"usedBytes"`
+	TotalBytes   uint64  `json:"totalBytes"`
+	UsagePercent float64 `json:"usagePercent"`
+}
+
+// procStatCPU holds cumulative CPU time counters from /proc/stat
+type procStatCPU struct {
+	user, nice, system, idle, iowait, irq, softirq, steal uint64
+}
+
+func (c procStatCPU) total() uint64 {
+	return c.user + c.nice + c.system + c.idle + c.iowait + c.irq + c.softirq + c.steal
+}
+
+func (c procStatCPU) idleTotal() uint64 {
+	return c.idle + c.iowait
+}
+
 var config Config
 
 // validServiceNameRegex defines allowed characters for systemd service names
@@ -77,6 +110,7 @@ func main() {
 	http.HandleFunc("/", statusHandler)
 	http.HandleFunc("/ps", psHandler)
 	http.HandleFunc("/stats", statsHandler)
+	http.HandleFunc("/system-stats", systemStatsHandler)
 	http.HandleFunc("/systemctl-is-active", systemctlIsActiveHandler)
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
@@ -326,8 +360,177 @@ func getSystemdStatuses(services []string) ([]ServiceStatus, error) {
 	return statuses, nil
 }
 
+// parseProcStatCPU parses the first "cpu " line from /proc/stat content.
+func parseProcStatCPU(content string) (procStatCPU, error) {
+	for _, line := range strings.Split(content, "\n") {
+		if !strings.HasPrefix(line, "cpu ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 8 {
+			return procStatCPU{}, fmt.Errorf("unexpected cpu line format in /proc/stat")
+		}
+		var c procStatCPU
+		ptrs := []*uint64{&c.user, &c.nice, &c.system, &c.idle, &c.iowait, &c.irq, &c.softirq, &c.steal}
+		for i, p := range ptrs {
+			n, err := strconv.ParseUint(fields[i+1], 10, 64)
+			if err != nil {
+				return procStatCPU{}, fmt.Errorf("parsing cpu field %d: %w", i, err)
+			}
+			*p = n
+		}
+		return c, nil
+	}
+	return procStatCPU{}, fmt.Errorf("cpu line not found in /proc/stat")
+}
+
+func readProcStatCPU() (procStatCPU, error) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return procStatCPU{}, fmt.Errorf("reading /proc/stat: %w", err)
+	}
+	return parseProcStatCPU(string(data))
+}
+
+// parseMemInfo parses MemTotal and MemAvailable from /proc/meminfo content,
+// returning (used bytes, total bytes, error).
+func parseMemInfo(content string) (used, total uint64, err error) {
+	var memTotal, memAvailable uint64
+	var foundTotal, foundAvailable bool
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				memTotal, err = strconv.ParseUint(fields[1], 10, 64)
+				if err != nil {
+					return 0, 0, fmt.Errorf("parsing MemTotal: %w", err)
+				}
+				memTotal *= 1024 // kB → bytes
+				foundTotal = true
+			}
+		} else if strings.HasPrefix(line, "MemAvailable:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				memAvailable, err = strconv.ParseUint(fields[1], 10, 64)
+				if err != nil {
+					return 0, 0, fmt.Errorf("parsing MemAvailable: %w", err)
+				}
+				memAvailable *= 1024 // kB → bytes
+				foundAvailable = true
+			}
+		}
+	}
+	if !foundTotal {
+		return 0, 0, fmt.Errorf("MemTotal not found in /proc/meminfo")
+	}
+	if !foundAvailable {
+		return 0, 0, fmt.Errorf("MemAvailable not found in /proc/meminfo")
+	}
+	return memTotal - memAvailable, memTotal, nil
+}
+
+func readMemInfo() (used, total uint64, err error) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, 0, fmt.Errorf("reading /proc/meminfo: %w", err)
+	}
+	return parseMemInfo(string(data))
+}
+
+// getDiskStat returns disk usage for the given path using syscall.Statfs.
+func getDiskStat(path string) (DiskStat, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return DiskStat{}, fmt.Errorf("statfs %s: %w", path, err)
+	}
+	bsize := uint64(st.Bsize) //nolint:gosec // Bsize is always positive
+	total := st.Blocks * bsize
+	free := st.Bavail * bsize
+	used := total - free
+	var usagePercent float64
+	if total > 0 {
+		usagePercent = float64(used) / float64(total) * 100
+	}
+	return DiskStat{
+		Path:         path,
+		UsedBytes:    used,
+		TotalBytes:   total,
+		UsagePercent: usagePercent,
+	}, nil
+}
+
+// formatBytes formats a byte count as a human-readable string (e.g. "3.5 GiB").
+func formatBytes(b uint64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := uint64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// getSystemStats collects CPU, memory, and disk usage for the host.
+// CPU usage is computed by sampling /proc/stat twice with a 200 ms interval.
+func getSystemStats() (SystemStats, error) {
+	var stats SystemStats
+
+	// CPU: two samples separated by 200 ms
+	cpu1, err := readProcStatCPU()
+	if err != nil {
+		return stats, fmt.Errorf("reading initial cpu stats: %w", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	cpu2, err := readProcStatCPU()
+	if err != nil {
+		return stats, fmt.Errorf("reading final cpu stats: %w", err)
+	}
+	totalDiff := cpu2.total() - cpu1.total()
+	idleDiff := cpu2.idleTotal() - cpu1.idleTotal()
+	if totalDiff > 0 {
+		stats.CPUUsagePercent = (1 - float64(idleDiff)/float64(totalDiff)) * 100
+	}
+
+	// Memory
+	memUsed, memTotal, err := readMemInfo()
+	if err != nil {
+		return stats, fmt.Errorf("reading memory info: %w", err)
+	}
+	stats.MemUsedBytes = memUsed
+	stats.MemTotalBytes = memTotal
+	if memTotal > 0 {
+		stats.MemUsagePercent = float64(memUsed) / float64(memTotal) * 100
+	}
+
+	// Disk usage for standard paths
+	for _, path := range []string{"/", "/var/lib/docker"} {
+		disk, err := getDiskStat(path)
+		if err != nil {
+			log.Printf("Warning: could not get disk stats for %s: %v", path, err)
+			continue
+		}
+		stats.Disks = append(stats.Disks, disk)
+	}
+
+	return stats, nil
+}
+
+func systemStatsHandler(w http.ResponseWriter, r *http.Request) {
+	stats, err := getSystemStats()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error getting system stats: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		log.Printf("Error encoding system stats response: %v", err)
+	}
+}
+
 func psHandler(w http.ResponseWriter, r *http.Request) {
-	// Execute docker ps --format json
 	cmd := exec.Command("docker", "ps", "--format", "json")
 	output, err := cmd.Output()
 	if err != nil {
@@ -470,7 +673,15 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpl := template.Must(template.New("status").Parse(`
+	sysStats, err := getSystemStats()
+	if err != nil {
+		log.Printf("Warning: could not get system stats: %v", err)
+		// Continue with zero-value sysStats so the dashboard still renders
+	}
+
+	tmpl := template.Must(template.New("status").Funcs(template.FuncMap{
+		"formatBytes": formatBytes,
+	}).Parse(`
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -714,6 +925,73 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             margin-top: 5px;
         }
 
+        .system-resources {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .system-resources h2 {
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+            color: #374151;
+        }
+
+        .system-resources-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .sys-stat-card {
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 14px;
+        }
+
+        .sys-stat-label {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .sys-stat-value {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #111827;
+            margin-bottom: 4px;
+        }
+
+        .sys-stat-sub {
+            font-size: 0.8rem;
+            color: #6b7280;
+            margin-bottom: 6px;
+        }
+
+        .progress-bar {
+            height: 6px;
+            background: #e5e7eb;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-fill.cpu  { background: #3b82f6; }
+        .progress-fill.mem  { background: #8b5cf6; }
+        .progress-fill.disk { background: #f59e0b; }
+
+        .progress-fill.high { background: #ef4444; }
+
         @media (max-width: 768px) {
             .services-grid {
                 grid-template-columns: 1fr;
@@ -737,6 +1015,40 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             <button id="statsToggle" class="toggle-button" onclick="toggleStats()">
                 Show Resource Stats
             </button>
+        </div>
+
+        <div class="system-resources">
+            <h2>System Resources</h2>
+            <div class="system-resources-grid">
+                <div class="sys-stat-card">
+                    <div class="sys-stat-label">CPU Usage</div>
+                    <div class="sys-stat-value">{{printf "%.1f" .SystemStats.CPUUsagePercent}}%</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill cpu{{if gt .SystemStats.CPUUsagePercent 85.0}} high{{end}}"
+                             style="width: {{printf "%.1f" .SystemStats.CPUUsagePercent}}%"></div>
+                    </div>
+                </div>
+                <div class="sys-stat-card">
+                    <div class="sys-stat-label">Memory</div>
+                    <div class="sys-stat-value">{{formatBytes .SystemStats.MemUsedBytes}} / {{formatBytes .SystemStats.MemTotalBytes}}</div>
+                    <div class="sys-stat-sub">{{printf "%.1f" .SystemStats.MemUsagePercent}}% used</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill mem{{if gt .SystemStats.MemUsagePercent 85.0}} high{{end}}"
+                             style="width: {{printf "%.1f" .SystemStats.MemUsagePercent}}%"></div>
+                    </div>
+                </div>
+                {{range .SystemStats.Disks}}
+                <div class="sys-stat-card">
+                    <div class="sys-stat-label">Disk {{.Path}}</div>
+                    <div class="sys-stat-value">{{formatBytes .UsedBytes}} / {{formatBytes .TotalBytes}}</div>
+                    <div class="sys-stat-sub">{{printf "%.1f" .UsagePercent}}% used</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill disk{{if gt .UsagePercent 85.0}} high{{end}}"
+                             style="width: {{printf "%.1f" .UsagePercent}}%"></div>
+                    </div>
+                </div>
+                {{end}}
+            </div>
         </div>
 
         <div class="summary">
@@ -868,12 +1180,14 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
 		StoppedCount int
 		TotalCount   int
 		Icon         string
+		SystemStats  SystemStats
 	}{
 		Services:     statuses,
 		RunningCount: runningCount,
 		StoppedCount: stoppedCount,
 		TotalCount:   len(statuses),
 		Icon:         "😺",
+		SystemStats:  sysStats,
 	}
 
 	if stoppedCount > 0 {
