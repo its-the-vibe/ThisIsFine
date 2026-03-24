@@ -931,6 +931,11 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             padding: 20px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             margin-bottom: 20px;
+            display: none;
+        }
+
+        .system-resources.visible {
+            display: block;
         }
 
         .system-resources h2 {
@@ -1147,6 +1152,11 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
                         }
                     }
                 });
+
+                const sysResources = document.querySelector('.system-resources');
+                if (sysResources) {
+                    sysResources.classList.add('visible');
+                }
             } catch (error) {
                 console.error('Error loading stats:', error);
                 alert('Failed to load resource stats. Please try again.');
@@ -1158,6 +1168,10 @@ func statusHandler(w http.ResponseWriter, r *http.Request) {
             allStats.forEach(stats => {
                 stats.classList.remove('visible');
             });
+            const sysResources = document.querySelector('.system-resources');
+            if (sysResources) {
+                sysResources.classList.remove('visible');
+            }
         }
     </script>
 </body>
