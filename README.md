@@ -1,5 +1,7 @@
 # ThisIsFine 🐳
 
+![CI](https://github.com/its-the-vibe/ThisIsFine/actions/workflows/ci.yaml/badge.svg?branch=main)
+
 A simple, self-contained service status dashboard written in Go. Monitor both Docker Compose services and systemd services at a glance.
 
 ![Dashboard Preview](https://img.shields.io/badge/status-active-success)
@@ -267,7 +269,25 @@ The `config.json` file supports the following options:
 ### Build
 
 ```bash
-go build
+make build
+```
+
+### Test
+
+```bash
+make test
+```
+
+### Lint
+
+```bash
+make lint
+```
+
+### Run all CI checks
+
+```bash
+make ci
 ```
 
 ### Run
